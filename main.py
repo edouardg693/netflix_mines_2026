@@ -48,7 +48,7 @@ async def register(pseudo : str,email : str, password : str):
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(f"""
-            INSERT INTO "Utilisateur" (Pseudo,AdresseMail,MotDePasse)  
+            INSERT INTO Utilisateur (Pseudo,AdresseMail,MotDePasse)  
             VALUES('{pseudo}','{email}','{password}') RETURNING *
             """)
         res = cursor.fetchone()
@@ -60,10 +60,11 @@ async def login(pseudo : str, password : str):
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(f"""
-            SELECT * FROM "Utilisateur" WHERE Pseudo='{pseudo}' AND MotDePasse='{password}'
+            SELECT * FROM Utilisateur WHERE Pseudo='{pseudo}' AND MotDePasse='{password}'
             """)
         res = cursor.fetchone()
         jwt_token = create_access_token({"sub": pseudo})
+        print(res)
         return {"access_token": jwt_token, "token_type": "bearer"} 
     
 
@@ -83,7 +84,7 @@ async def get_film_page(page: int, per_page: int, genre : int | None = None):
             cursor.execute(f"SELECT * FROM FILM LIMIT {per_page} OFFSET {offset}")
             
         films = cursor.fetchall()
-        
+        print(films)
         return {
             "data": films,
             "page": page,
@@ -97,6 +98,7 @@ def getFilm(film_id: int):
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM Film WHERE Id = ?", (film_id,))
         res = cursor.fetchone()
+        print(res)
         return res
 
 @app.get("/genres")
@@ -105,6 +107,7 @@ def getGenres():
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM Genre")
         res = cursor.fetchall()
+        print(res)
         return res
     
 @app.post("/preferences")
@@ -119,7 +122,7 @@ async def add_preference(Authorization: str, user_id: int, genre_id: int):
         return {"error": "Token has expired"}
     except jwt.InvalidTokenError:
         return {"error": "Invalid token"}   
-                
+
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(f"""
