@@ -1,9 +1,21 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from db import get_connection
+import jwt
+from datetime import datetime, timedelta, timezone
+
+SECRET_KEY = "banane"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+def create_access_token(data:dict):
+    to_encode = data.copy()
+    expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
 
 app = FastAPI()
-
 
 @app.get("/ping")
 def ping():
@@ -29,6 +41,54 @@ async def createFilm(film : Film):
         res = cursor.fetchone()
         print(res)
         return res
+    
+@app.post("/auth/register")
+async def register(pseudo : str,email : str, password : str):
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            INSERT INTO "Utilisateur" (Pseudo,AdresseMail,MotDePasse)  
+            VALUES('{pseudo}','{email}','{password}') RETURNING *
+            """)
+        res = cursor.fetchone()
+        print(res)
+        return res
+    
+@app.post("/auth/login")
+async def login(pseudo : str, password : str):
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT * FROM "Utilisateur" WHERE Pseudo='{pseudo}' AND MotDePasse='{password}'
+            """)
+        res = cursor.fetchone()
+        jwt_token = create_access_token({"sub": pseudo})
+        return {"access_token": jwt_token, "token_type": "bearer"} 
+    
+
+@app.get("/film")
+async def get_film_page(page: int, per_page: int, genre : int | None = None):
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        offset = (page - 1) * per_page
+        
+        if genre is not None:
+            cursor.execute(f"SELECT COUNT(*) FROM FILM WHERE Genre_ID = {genre}")
+            total = cursor.fetchone()[0]
+            cursor.execute(f"SELECT * FROM FILM WHERE Genre_ID = {genre} LIMIT {per_page} OFFSET {offset}")
+        else:
+            cursor.execute("SELECT COUNT(*) FROM FILM")
+            total = cursor.fetchone()[0]
+            cursor.execute(f"SELECT * FROM FILM LIMIT {per_page} OFFSET {offset}")
+            
+        films = cursor.fetchall()
+        
+        return {
+            "data": films,
+            "page": page,
+            "per_page": per_page,
+            "total": total
+        }
 
 @app.get("/films/{film_id}")
 def getFilm(film_id: int):
@@ -46,8 +106,27 @@ def getGenres():
         res = cursor.fetchall()
         return res
     
+@app.post("/preferences")
+async def add_preference(Authorization: str, user_id: int, genre_id: int):
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            INSERT INTO Genre_utilisateur (ID_Genre,ID_User)  
+            VALUES({genre_id},{user_id}) RETURNING *
+            """)
+        conn.commit()
+        return {"genre_id": genre_id}
 
-
+@app.delete("/preferences/{genre_id}")
+async def remove_preference(Authorization: str, user_id: int, genre_id: int):
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            DELETE FROM Genre_utilisateur WHERE ID_Genre = {genre_id} AND ID_User = {user_id}
+            """)
+        conn.commit()
+        return {"genre_id": genre_id}
+    
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
