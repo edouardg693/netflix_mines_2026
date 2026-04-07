@@ -1,0 +1,91 @@
+name: Tests API
+
+on: push
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout du code élève
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Télécharger les fichiers de test
+        run: |
+          curl -sSfL "https://raw.githubusercontent.com/SIMVIA-lucas-sovre/netflix_mines_2026/test/test_api.py" -o test_api.py
+          curl -sSfL "https://raw.githubusercontent.com/SIMVIA-lucas-sovre/netflix_mines_2026/test/db.py" -o db.py
+
+      - name: Installer les dépendances
+        run: |
+          pip install fastapi uvicorn httpx pytest pytest-json-report
+
+      - name: Lancer les tests et générer le rapport
+        run: |
+          pytest test_api.py -v --tb=short --json-report --json-report-file=report.json || true
+          python3 - <<'SCRIPT'
+          import json, os, sys
+
+          with open("report.json") as f:
+              report = json.load(f)
+
+          tests = report.get("tests", [])
+          passed = [t for t in tests if t["outcome"] == "passed"]
+          failed = [t for t in tests if t["outcome"] != "passed"]
+
+          total = len(tests)
+          nb_passed = len(passed)
+          nb_failed = len(failed)
+
+          lines = []
+          lines.append("# Résultats des tests")
+          lines.append("")
+          lines.append(f"**{nb_passed}/{total}** tests passent ✅")
+          if nb_failed:
+              lines.append(f"**{nb_failed}** test(s) échoué(s) ❌")
+          lines.append("")
+
+          if failed:
+              lines.append("## Détail des échecs")
+              lines.append("")
+              lines.append("| Test | Erreur |")
+              lines.append("|------|--------|")
+              for t in failed:
+                  name = t["nodeid"].split("::")[-1]
+                  # Extraire le message d'erreur
+                  msg = ""
+                  crash = t.get("call", {}).get("crash", {})
+                  if crash.get("message"):
+                      msg = crash["message"].split("\n")[0]
+                  elif t.get("call", {}).get("longrepr"):
+                      longrepr = t["call"]["longrepr"]
+                      if isinstance(longrepr, str):
+                          err_lines = [l.strip() for l in longrepr.splitlines() if l.strip()]
+                          msg = err_lines[-1] if err_lines else "Erreur inconnue"
+                  else:
+                      msg = "Erreur inconnue"
+                  # Échapper les pipes pour le tableau markdown
+                  msg = msg.replace("|", "\\|")
+                  lines.append(f"| `{name}` | {msg} |")
+              lines.append("")
+
+          if nb_failed == 0:
+              lines.append("🎉 Tous les tests passent, bravo !")
+
+          report_text = "\n".join(lines)
+
+          # Afficher dans les logs
+          print(report_text)
+
+          # Écrire dans le Job Summary GitHub
+          summary_file = os.environ.get("GITHUB_STEP_SUMMARY", "")
+          if summary_file:
+              with open(summary_file, "a") as f:
+                  f.write(report_text + "\n")
+
+          sys.exit(1 if nb_failed else 0)
+          SCRIPT
