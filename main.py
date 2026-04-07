@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from db import get_connection
 import jwt
 from datetime import datetime, timedelta, timezone
+from fastapi import Header
 
 SECRET_KEY = "banane"
 ALGORITHM = "HS256"
@@ -108,6 +109,17 @@ def getGenres():
     
 @app.post("/preferences")
 async def add_preference(Authorization: str, user_id: int, genre_id: int):
+    token = Authorization.split(" ")[1]
+    try :
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        pseudo = payload.get("sub")
+        if pseudo is None:
+            return {"error": "Invalid token"}
+    except jwt.ExpiredSignatureError:
+        return {"error": "Token has expired"}
+    except jwt.InvalidTokenError:
+        return {"error": "Invalid token"}   
+                
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(f"""
@@ -116,16 +128,28 @@ async def add_preference(Authorization: str, user_id: int, genre_id: int):
             """)
         conn.commit()
         return {"genre_id": genre_id}
+    
 
 @app.delete("/preferences/{genre_id}")
 async def remove_preference(Authorization: str, user_id: int, genre_id: int):
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(f"""
-            DELETE FROM Genre_utilisateur WHERE ID_Genre = {genre_id} AND ID_User = {user_id}
-            """)
-        conn.commit()
-        return {"genre_id": genre_id}
+    token = Authorization.split(" ")[1] 
+    try :
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        pseudo = payload.get("sub")
+        if pseudo is None:
+            return {"error": "Invalid token"}
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"""
+                DELETE FROM Genre_utilisateur WHERE ID_Genre = {genre_id} AND ID_User = {user_id}
+                """)
+            conn.commit()
+            return {"genre_id": genre_id}
+    except jwt.ExpiredSignatureError:
+        return {"error": "Token has expired"}
+    except jwt.InvalidTokenError:
+        return {"error": "Invalid token"}
+    
     
 if __name__ == "__main__":
     import uvicorn
