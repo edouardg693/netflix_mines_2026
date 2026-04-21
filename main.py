@@ -40,9 +40,6 @@ class LoginRequest(BaseModel):
     email: str
     password: str
 
-class PreferenceRequest(BaseModel):
-    genre_id: int
-
 @app.post("/film")
 async def createFilm(film : Film):
     with get_connection() as conn:
@@ -64,8 +61,9 @@ async def register(user : RegisterRequest):
             VALUES('{user.pseudo}','{user.email}','{user.password}') RETURNING *
             """)
         res = cursor.fetchone()
-        print(res)
-        return res
+
+        jwt_token = create_access_token({"sub": user.pseudo})
+        return {"access_token": jwt_token, "token_type": "bearer"}
     
 @app.post("/auth/login")
 async def login(user: LoginRequest):
@@ -138,75 +136,83 @@ def getGenres():
         print(res)
         return res
     
-
-@app.post("/preferences", status_code=201)
-async def add_preference(pref: PreferenceRequest, Authorization: str = Header(...)):
-    if not Authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Invalid token")
-        
+@app.post("/preferences")
+async def add_preference(Authorization: str, user_id: int, genre_id: int):
     token = Authorization.split(" ")[1]
     try :
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         pseudo = payload.get("sub")
         if pseudo is None:
-            raise HTTPException(status_code=401, detail="Invalid token")
-    except jwt.PyJWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+            return {"error": "Invalid token"}
+    except jwt.ExpiredSignatureError:
+        return {"error": "Token has expired"}
+    except jwt.InvalidTokenError:
+        return {"error": "Invalid token"}   
 
     with get_connection() as conn:
         cursor = conn.cursor()
-        
-        cursor.execute("SELECT rowid FROM Utilisateur WHERE Pseudo = ?", (pseudo,))
-        user = cursor.fetchone()
-        if not user:
-            raise HTTPException(status_code=401, detail="User not found")
-        user_id = user[0]
-
-        cursor.execute("SELECT * FROM Genre_utilisateur WHERE ID_Genre=? AND ID_User=?", (pref.genre_id, user_id))
-        if cursor.fetchone():
-            raise HTTPException(status_code=409, detail="Preference already exists")
         cursor.execute(f"""
             INSERT INTO Genre_utilisateur (ID_Genre,ID_User)  
-            VALUES({pref.genre_id},{user_id}) RETURNING *
+            VALUES({genre_id},{user_id}) RETURNING *
             """)
         conn.commit()
-        return {"genre_id": pref.genre_id}
+        return {"genre_id": genre_id}
     
 
 @app.delete("/preferences/{genre_id}")
-async def remove_preference(genre_id: int, Authorization: str = Header(...)):
-    if not Authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Invalid token")
-        
+async def remove_preference(Authorization: str, user_id: int, genre_id: int):
     token = Authorization.split(" ")[1] 
     try :
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        pseudo = payload.get("sub")
+        if pseudo is None:
+            return {"error": "Invalid token"}
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"""
+                DELETE FROM Genre_utilisateur WHERE ID_Genre = {genre_id} AND ID_User = {user_id}
+                """)
+            conn.commit()
+            return {"genre_id": genre_id}
+    except jwt.ExpiredSignatureError:
+        return {"error": "Token has expired"}
+    except jwt.InvalidTokenError:
+        return {"error": "Invalid token"}
+
+
+@app.get("/preferences/recommendations")
+async def get_recommendations(Authorization: str = Header(...)):
+    token = Authorization.split(" ")[1]
+    try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         pseudo = payload.get("sub")
         if pseudo is None:
             raise HTTPException(status_code=401, detail="Invalid token")
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
-        
+
     with get_connection() as conn:
+        conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         
-        cursor.execute("SELECT rowid FROM Utilisateur WHERE Pseudo = ?", (pseudo,))
+        cursor.execute('SELECT rowid FROM "Utilisateur" WHERE Pseudo = ? OR AdresseMail = ?', (pseudo, pseudo))
         user = cursor.fetchone()
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
         user_id = user[0]
 
-        cursor.execute(f"""
-            DELETE FROM Genre_utilisateur WHERE ID_Genre = {genre_id} AND ID_User = {user_id}
-            """)
-            
-        if cursor.rowcount == 0:
-            raise HTTPException(status_code=404, detail="Preference not found")
-            
-        conn.commit()
-        return {"genre_id": genre_id}
-    
-    
+        query = """
+            SELECT DISTINCT f.rowid as ID, f.* FROM Film f
+            JOIN Genre_utilisateur gu ON f.Genre_ID = gu.ID_Genre
+            WHERE gu.ID_User = ?
+            ORDER BY f.DateSortie DESC
+            LIMIT 5
+        """
+        cursor.execute(query, (user_id,))
+        films = [dict(row) for row in cursor.fetchall()]
+        
+        return films
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
