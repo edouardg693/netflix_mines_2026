@@ -40,40 +40,39 @@ class LoginRequest(BaseModel):
     email: str
     password: str
 
-class PreferenceRequest(BaseModel):
-    genre_id: int
-
 @app.post("/film")
 async def createFilm(film : Film):
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO Film (Nom, Note, DateSortie, Image, Video, Genre_ID)  
-            VALUES(?, ?, ?, ?, ?, ?) RETURNING *
-            """, (film.nom, film.note, film.dateSortie, film.image, film.video, film.genreId))
+        cursor.execute(f"""
+            INSERT INTO Film (Nom,Note,DateSortie,Image,Video,Genre_ID)  
+            VALUES('{film.nom}',{film.note},{film.dateSortie},'{film.image}','{film.video}',{film.genreId}) RETURNING *
+            """)
         res = cursor.fetchone()
+        print(res)
         return res
     
 @app.post("/auth/register")
 async def register(user : RegisterRequest):
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO Utilisateur (Pseudo, AdresseMail, MotDePasse)  
-            VALUES(?, ?, ?) RETURNING *
-            """, (user.pseudo, user.email, user.password))
+        cursor.execute(f"""
+            INSERT INTO Utilisateur (Pseudo,AdresseMail,MotDePasse)  
+            VALUES('{user.pseudo}','{user.email}','{user.password}') RETURNING *
+            """)
         res = cursor.fetchone()
+        print(res)
         return res
     
 @app.post("/auth/login")
 async def login(user: LoginRequest):
     with get_connection() as conn:
         cursor = conn.cursor()
+        
         cursor.execute("""
-            SELECT * FROM Utilisateur WHERE AdresseMail=? AND MotDePasse=?
+            SELECT * FROM "Utilisateur" WHERE AdresseMail=? AND MotDePasse=?
             """, (user.email, user.password))
         res = cursor.fetchone()
-        
         if res is None:
             raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect")
 
@@ -130,76 +129,55 @@ def getFilm(film_id: int):
 @app.get("/genres")
 def getGenres():
     with get_connection() as conn:
-        conn.row_factory = sqlite3.Row # Ajouté pour renvoyer des dictionnaires propres
         cursor = conn.cursor()
-        cursor.execute("SELECT rowid as ID, * FROM Genre")
-        res = [dict(row) for row in cursor.fetchall()]
+        cursor.execute("SELECT * FROM Genre")
+        res = cursor.fetchall()
+        print(res)
         return res
     
 @app.post("/preferences")
-async def add_preference(pref: PreferenceRequest, Authorization: str = Header(None)):
-    if Authorization is None or not Authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Token manquant ou mal formaté")
-        
+async def add_preference(Authorization: str, user_id: int, genre_id: int):
     token = Authorization.split(" ")[1]
-    
-    try:
+    try :
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         pseudo = payload.get("sub")
         if pseudo is None:
-            raise HTTPException(status_code=401, detail="Token invalide")
-    except Exception:
-        raise HTTPException(status_code=401, detail="Token expiré ou invalide")
+            return {"error": "Invalid token"}
+    except jwt.ExpiredSignatureError:
+        return {"error": "Token has expired"}
+    except jwt.InvalidTokenError:
+        return {"error": "Invalid token"}   
 
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT rowid FROM Utilisateur WHERE Pseudo = ?", (pseudo,))
-        user_row = cursor.fetchone()
-        
-        if not user_row:
-            raise HTTPException(status_code=404, detail="Utilisateur introuvable")
-            
-        user_id = user_row[0]
-
-        cursor.execute("""
-            INSERT INTO Genre_utilisateur (ID_Genre, ID_User)  
-            VALUES(?, ?)
-            """, (pref.genre_id, user_id))
+        cursor.execute(f"""
+            INSERT INTO Genre_utilisateur (ID_Genre,ID_User)  
+            VALUES({genre_id},{user_id}) RETURNING *
+            """)
         conn.commit()
-        
-        return {"genre_id": pref.genre_id}
+        return {"genre_id": genre_id}
     
 
 @app.delete("/preferences/{genre_id}")
-async def remove_preference(genre_id: int, Authorization: str = Header(None)):
-    if Authorization is None or not Authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Token manquant ou mal formaté")
-        
+async def remove_preference(Authorization: str, user_id: int, genre_id: int):
     token = Authorization.split(" ")[1] 
-    
-    try:
+    try :
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         pseudo = payload.get("sub")
         if pseudo is None:
-             raise HTTPException(status_code=401, detail="Token invalide")
-    except Exception:
-         raise HTTPException(status_code=401, detail="Token expiré ou invalide")
-
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT rowid FROM Utilisateur WHERE Pseudo = ?", (pseudo,))
-        user_row = cursor.fetchone()
-        
-        if not user_row:
-            raise HTTPException(status_code=404, detail="Utilisateur introuvable")
-            
-        user_id = user_row[0]
-
-        cursor.execute("""
-            DELETE FROM Genre_utilisateur WHERE ID_Genre = ? AND ID_User = ?
-            """, (genre_id, user_id))
-        conn.commit()
-        return {"genre_id": genre_id}
+            return {"error": "Invalid token"}
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"""
+                DELETE FROM Genre_utilisateur WHERE ID_Genre = {genre_id} AND ID_User = {user_id}
+                """)
+            conn.commit()
+            return {"genre_id": genre_id}
+    except jwt.ExpiredSignatureError:
+        return {"error": "Token has expired"}
+    except jwt.InvalidTokenError:
+        return {"error": "Invalid token"}
+    
     
 if __name__ == "__main__":
     import uvicorn
