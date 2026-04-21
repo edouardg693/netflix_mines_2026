@@ -22,6 +22,9 @@ app = FastAPI()
 def ping():
     return {"message": "pong"}
 
+
+
+
 class Film(BaseModel):
     id: int | None = None
     nom: str
@@ -30,6 +33,19 @@ class Film(BaseModel):
     image: str | None = None
     video: str | None = None
     genreId: int | None = None
+
+class RegisterRequest(BaseModel):
+    email: str
+    pseudo: str
+    password: str
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+
+
 
 @app.post("/film")
 async def createFilm(film : Film):
@@ -44,31 +60,31 @@ async def createFilm(film : Film):
         return res
     
 @app.post("/auth/register")
-async def register(pseudo : str,email : str, password : str):
+async def register(user : RegisterRequest):
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(f"""
             INSERT INTO Utilisateur (Pseudo,AdresseMail,MotDePasse)  
-            VALUES('{pseudo}','{email}','{password}') RETURNING *
+            VALUES('{user.pseudo}','{user.email}','{user.password}') RETURNING *
             """)
         res = cursor.fetchone()
         print(res)
         return res
     
 @app.post("/auth/login")
-async def login(pseudo : str, password : str):
+async def login(user : LoginRequest):
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(f"""
-            SELECT * FROM Utilisateur WHERE Pseudo='{pseudo}' AND MotDePasse='{password}'
+            SELECT * FROM Utilisateur WHERE Pseudo='{user.pseudo}' AND MotDePasse='{user.password}'
             """)
         res = cursor.fetchone()
-        jwt_token = create_access_token({"sub": pseudo})
+        jwt_token = create_access_token({"sub": user.pseudo})
         print(res)
         return {"access_token": jwt_token, "token_type": "bearer"} 
     
 
-@app.get("/film")
+@app.get("/films")
 async def get_film_page(page: int, per_page: int, genre : int | None = None):
     with get_connection() as conn:
         cursor = conn.cursor()
