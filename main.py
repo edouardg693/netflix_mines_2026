@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from db import get_connection
 import jwt
 from datetime import datetime, timedelta, timezone
-from fastapi import Header
+import sqlite3 
 
 SECRET_KEY = "banane"
 ALGORITHM = "HS256"
@@ -21,9 +21,6 @@ app = FastAPI()
 @app.get("/ping")
 def ping():
     return {"message": "pong"}
-
-
-
 
 class Film(BaseModel):
     id: int | None = None
@@ -43,17 +40,13 @@ class LoginRequest(BaseModel):
     email: str
     password: str
 
-
-
-
-
 @app.post("/film")
 async def createFilm(film : Film):
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(f"""
-            INSERT INTO Film (Nom,Note,DateSortie,Image,Video)  
-            VALUES('{film.nom}',{film.note},{film.dateSortie},'{film.image}','{film.video}') RETURNING *
+            INSERT INTO Film (Nom,Note,DateSortie,Image,Video,Genre_ID)  
+            VALUES('{film.nom}',{film.note},{film.dateSortie},'{film.image}','{film.video}',{film.genreId}) RETURNING *
             """)
         res = cursor.fetchone()
         print(res)
@@ -87,27 +80,32 @@ async def login(user: LoginRequest):
         jwt_token = create_access_token({"sub": pseudo_utilisateur})
         
         return {"access_token": jwt_token, "token_type": "bearer"}
-    
 
 @app.get("/films")
-async def get_film_page(page: int = 1, per_page: int = 20, genre: int | None = None):
+async def get_film_page(page: int = 1, per_page: int = 20, genre_id: int | None = None):
     with get_connection() as conn:
+        conn.row_factory = sqlite3.Row 
         cursor = conn.cursor()
         offset = (page - 1) * per_page
+        where_clause = ""
+        params = []
         
-        if genre is not None:
-            cursor.execute(f"SELECT COUNT(*) FROM FILM WHERE Genre_ID = {genre}")
-            total = cursor.fetchone()[0]
-            cursor.execute("""SELECT * FROM Film WHERE Genre_ID = ? ORDER BY DateSortie DESC LIMIT ? OFFSET ?""", (genre_id, per_page, offset))
-
-
-        else:
-            cursor.execute("SELECT COUNT(*) FROM FILM")
-            total = cursor.fetchone()[0]
-            cursor.execute(f"SELECT * FROM FILM LIMIT {per_page} OFFSET {offset}")
+        if genre_id is not None:
+            where_clause = "WHERE Genre_ID = ?"
+            params.append(genre_id)
             
-        films = cursor.fetchall()
-        print(films)
+        cursor.execute(f"SELECT COUNT(*) FROM Film {where_clause}", params)
+        total = cursor.fetchone()[0]
+
+        query = f"""
+            SELECT rowid as ID, * FROM Film 
+            {where_clause} 
+            ORDER BY DateSortie DESC 
+            LIMIT ? OFFSET ?
+        """
+        cursor.execute(query, params + [per_page, offset])
+        films = [dict(row) for row in cursor.fetchall()]
+        
         return {
             "data": films,
             "page": page,
@@ -118,17 +116,15 @@ async def get_film_page(page: int = 1, per_page: int = 20, genre: int | None = N
 @app.get("/films/{film_id}")
 def getFilm(film_id: int):
     with get_connection() as conn:
+        conn.row_factory = sqlite3.Row 
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM Film WHERE Id = ?", (film_id,))
+        cursor.execute("SELECT rowid as ID, * FROM Film WHERE rowid = ? OR Id = ?", (film_id, film_id))
         res = cursor.fetchone()
-
         
         if res is None:
-            # On déclenche l'erreur 404 qui va stopper la fonction
             raise HTTPException(status_code=404, detail="Film introuvable")
             
-        return res
-        
+        return dict(res)
 
 @app.get("/genres")
 def getGenres():
