@@ -40,6 +40,10 @@ class LoginRequest(BaseModel):
     email: str
     password: str
 
+class PreferenceRequest(BaseModel):
+    genre_id: int
+
+
 @app.post("/film")
 async def createFilm(film : Film):
     with get_connection() as conn:
@@ -134,49 +138,78 @@ def getGenres():
         res = cursor.fetchall()
         print(res)
         return res
-    
-@app.post("/preferences")
-async def add_preference(Authorization: str, user_id: int, genre_id: int):
+
+@app.post("/preferences", status_code=201)
+async def add_preference(pref: PreferenceRequest, Authorization: str = Header(...)):
+    if not Authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid token format")
+        
     token = Authorization.split(" ")[1]
+    
     try :
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         pseudo = payload.get("sub")
         if pseudo is None:
-            return {"error": "Invalid token"}
+            raise HTTPException(status_code=401, detail="Invalid token payload")
     except jwt.ExpiredSignatureError:
-        return {"error": "Token has expired"}
+        raise HTTPException(status_code=401, detail="Token has expired")
     except jwt.InvalidTokenError:
-        return {"error": "Invalid token"}   
+        raise HTTPException(status_code=401, detail="Invalid token")
 
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(f"""
-            INSERT INTO Genre_utilisateur (ID_Genre,ID_User)  
-            VALUES({genre_id},{user_id}) RETURNING *
-            """)
+        
+        cursor.execute("SELECT rowid FROM Utilisateur WHERE Pseudo = ?", (pseudo,))
+        user = cursor.fetchone()
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+        user_id = user[0]
+        
+        cursor.execute("SELECT * FROM Genre_utilisateur WHERE ID_Genre=? AND ID_User=?", (pref.genre_id, user_id))
+        if cursor.fetchone():
+            raise HTTPException(status_code=409, detail="Preference already exists")
+            
+        cursor.execute("""
+            INSERT INTO Genre_utilisateur (ID_Genre, ID_User)  
+            VALUES(?, ?)
+            """, (pref.genre_id, user_id))
         conn.commit()
-        return {"genre_id": genre_id}
+        return {"genre_id": pref.genre_id}
     
 
 @app.delete("/preferences/{genre_id}")
-async def remove_preference(Authorization: str, user_id: int, genre_id: int):
+async def remove_preference(genre_id: int, Authorization: str = Header(...)):
+    if not Authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid token format")
+        
     token = Authorization.split(" ")[1] 
     try :
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         pseudo = payload.get("sub")
         if pseudo is None:
-            return {"error": "Invalid token"}
-        with get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(f"""
-                DELETE FROM Genre_utilisateur WHERE ID_Genre = {genre_id} AND ID_User = {user_id}
-                """)
-            conn.commit()
-            return {"genre_id": genre_id}
+            raise HTTPException(status_code=401, detail="Invalid token payload")
     except jwt.ExpiredSignatureError:
-        return {"error": "Token has expired"}
+        raise HTTPException(status_code=401, detail="Token has expired")
     except jwt.InvalidTokenError:
-        return {"error": "Invalid token"}
+        raise HTTPException(status_code=401, detail="Invalid token")
+        
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT rowid FROM Utilisateur WHERE Pseudo = ?", (pseudo,))
+        user = cursor.fetchone()
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+        user_id = user[0]
+        
+        cursor.execute("""
+            DELETE FROM Genre_utilisateur WHERE ID_Genre = ? AND ID_User = ?
+            """, (genre_id, user_id))
+            
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Preference not found")
+            
+        conn.commit()
+        return {"genre_id": genre_id}
     
     
 if __name__ == "__main__":
