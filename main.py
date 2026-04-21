@@ -76,7 +76,7 @@ async def login(user: LoginRequest):
         
         if res is None:
             raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect")
-        
+
         pseudo_utilisateur = res[1] 
         jwt_token = create_access_token({"sub": pseudo_utilisateur})
         
